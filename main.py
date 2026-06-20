@@ -91,6 +91,7 @@ with sd.RawInputStream(
     while True:
 
         frame, _ = stream.read(FRAME_SIZE)
+        frame = bytes(frame)  # Конвертируем memoryview в bytes
 
         if state == "WAIT_WAKE":
 
