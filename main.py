@@ -6,6 +6,32 @@ import sounddevice as sd
 import webrtcvad
 from vosk import Model, KaldiRecognizer
 
+import requests
+
+
+SERVER_URL = "http://192.168.1.100:8000/audio"
+
+
+def upload_wav(filename):
+    try:
+        with open(filename, "rb") as f:
+            response = requests.post(
+                SERVER_URL,
+                files={
+                    "file": (
+                        filename,
+                        f,
+                        "audio/wav"
+                    )
+                },
+                timeout=30
+            )
+
+        print(response.json())
+
+    except Exception as e:
+        print("Ошибка отправки:", e)
+
 # --------------------
 # CONFIG
 # --------------------
@@ -144,6 +170,8 @@ with sd.RawInputStream(
                         wf.writeframes(chunk)
 
                 print(f"Сохранено: {filename}")
+
+                upload_wav(filename)
 
                 led.off()
 
