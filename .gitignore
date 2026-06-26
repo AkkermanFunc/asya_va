@@ -1,1 +1,5 @@
-models/
+speaker/models/
+server/models/
+*.wav
+__pycache__/
+*.pyc

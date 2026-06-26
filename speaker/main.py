@@ -1,33 +1,49 @@
+import array
+import base64
 import json
+import math
+import uuid
 import wave
 from collections import deque
+from pathlib import Path
 
 import sounddevice as sd
-import webrtcvad
 from vosk import Model, KaldiRecognizer
 
-import requests
+import websocket  # pip install websocket-client
 
 
-SERVER_URL = "http://192.168.1.100:8000/audio"
+BASE_DIR = Path(__file__).resolve().parent
+
+SERVER_WS_URL = "ws://127.0.0.1:8000/ws"
+DEVICE_ID = "speaker_01"
 
 
-def upload_wav(filename):
+def send_wav(filename):
+    """Отправляет WAV на сервер по WebSocket и показывает распознанный текст."""
     try:
         with open(filename, "rb") as f:
-            response = requests.post(
-                SERVER_URL,
-                files={
-                    "file": (
-                        filename,
-                        f,
-                        "audio/wav"
-                    )
-                },
-                timeout=30
-            )
+            wav_bytes = f.read()
 
-        print(response.json())
+        ws = websocket.create_connection(SERVER_WS_URL, timeout=30)
+        try:
+            ws.send(json.dumps({
+                "type": "audio_request",
+                "request_id": str(uuid.uuid4()),
+                "device_id": DEVICE_ID,
+                "audio_data": base64.b64encode(wav_bytes).decode("ascii"),
+                "format": "wav",
+                "sample_rate": SAMPLE_RATE,
+            }))
+
+            response = json.loads(ws.recv())
+        finally:
+            ws.close()
+
+        if response.get("type") == "audio_response":
+            print("Распознано:", response.get("text_response", ""))
+        else:
+            print("Ошибка сервера:", response.get("message", response))
 
     except Exception as e:
         print("Ошибка отправки:", e)
@@ -45,6 +61,9 @@ WAKE_WORD = "ася"
 LED_PIN = 17
 
 SILENCE_TIMEOUT_MS = 1500
+
+# Порог энергии (RMS) фрейма: ниже = тишина. Подбирается под микрофон/шум.
+SILENCE_RMS_THRESHOLD = 500
 
 # --------------------
 # LED
@@ -65,16 +84,23 @@ except Exception:
     led = DummyLed()
 
 # --------------------
-# VAD
+# VAD (энергетический, без нативных зависимостей)
 # --------------------
 
-vad = webrtcvad.Vad(2)
+def is_speech(frame_bytes):
+    """True, если громкость фрейма выше порога тишины."""
+    samples = array.array("h")
+    samples.frombytes(frame_bytes)
+    if not samples:
+        return False
+    rms = math.sqrt(sum(s * s for s in samples) / len(samples))
+    return rms > SILENCE_RMS_THRESHOLD
 
 # --------------------
 # VOSK
 # --------------------
 
-model = Model("vosk-model-small-ru-0.22")
+model = Model(str(BASE_DIR / "models" / "vosk-model-small-ru-0.22"))
 
 grammar = json.dumps(
     [
@@ -145,12 +171,7 @@ with sd.RawInputStream(
 
             recorded_frames.append(frame)
 
-            is_speech = vad.is_speech(
-                frame,
-                SAMPLE_RATE
-            )
-
-            if is_speech:
+            if is_speech(frame):
                 silence_frames = 0
             else:
                 silence_frames += 1
@@ -159,7 +180,7 @@ with sd.RawInputStream(
 
             if silence_ms >= SILENCE_TIMEOUT_MS:
 
-                filename = "command.wav"
+                filename = str(BASE_DIR / "command.wav")
 
                 with wave.open(filename, "wb") as wf:
                     wf.setnchannels(1)
@@ -171,7 +192,7 @@ with sd.RawInputStream(
 
                 print(f"Сохранено: {filename}")
 
-                upload_wav(filename)
+                send_wav(filename)
 
                 led.off()
 
