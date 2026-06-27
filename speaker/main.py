@@ -1,5 +1,6 @@
 import array
 import base64
+import io
 import json
 import math
 import uuid
@@ -7,6 +8,7 @@ import wave
 from collections import deque
 from pathlib import Path
 
+import numpy as np
 import sounddevice as sd
 from vosk import Model, KaldiRecognizer
 
@@ -19,13 +21,21 @@ SERVER_WS_URL = "ws://127.0.0.1:8000/ws"
 DEVICE_ID = "speaker_01"
 
 
+def play_wav(wav_bytes):
+    """Проигрывает WAV-байты через колонки."""
+    with wave.open(io.BytesIO(wav_bytes), "rb") as wf:
+        audio = np.frombuffer(wf.readframes(wf.getnframes()), dtype=np.int16)
+        sd.play(audio, samplerate=wf.getframerate())
+        sd.wait()
+
+
 def send_wav(filename):
-    """Отправляет WAV на сервер по WebSocket и показывает распознанный текст."""
+    """Отправляет WAV на сервер по WebSocket, показывает и озвучивает ответ."""
     try:
         with open(filename, "rb") as f:
             wav_bytes = f.read()
 
-        ws = websocket.create_connection(SERVER_WS_URL, timeout=30)
+        ws = websocket.create_connection(SERVER_WS_URL, timeout=60)
         try:
             ws.send(json.dumps({
                 "type": "audio_request",
@@ -41,7 +51,11 @@ def send_wav(filename):
             ws.close()
 
         if response.get("type") == "audio_response":
-            print("Распознано:", response.get("text_response", ""))
+            print("Ответ:", response.get("text_response", ""))
+
+            audio_data = response.get("audio_data")
+            if audio_data:
+                play_wav(base64.b64decode(audio_data))
         else:
             print("Ошибка сервера:", response.get("message", response))
 
